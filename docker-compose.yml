@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  integration-dgl-service:
+    build: .
+    container_name: integration-dgl-service
+    ports:
+      - "8082:8082"
+    env_file:
+      - .env
+    networks:
+      - integration_network
+
+networks:
+  integration_network:
+    external: true
