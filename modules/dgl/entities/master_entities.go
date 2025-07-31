@@ -314,3 +314,17 @@ type Region struct {
 	Key2  string `db:"provincenamethai"`
 	Value string `db:"regionname"`
 }
+
+type BranchLookupInfo struct {
+	Ccdef   string `json:"ccdef,omitempty"`
+	Brcntry string `json:"brcntry,omitempty"`
+	Brstate string `json:"brstate,omitempty"`
+	Dist    string `json:"dist,omitempty"`
+	Brcity  string `json:"brcity,omitempty"` //(อำเภอ name)
+	Brad3   string `json:"brad3,omitempty"`  //(ตำบล name)
+}
+
+type LatitudeLongitudeLookupInfo struct {
+	Latitude  float64 `json:"latitude,omitempty"`
+	Longitude float64 `json:"longitude,omitempty"`
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"integration-dgl-service/modules/dgl/entities"
 	"integration-dgl-service/modules/dgl/repositories"
+	"integration-dgl-service/pkg/utils"
 	"strconv"
 )
 
@@ -24,45 +25,68 @@ func NewDglUsecase(dglRepo repositories.DglRepository) DglUsecase {
 func (u *dglUsecase) DglMapper(dglRecord *entities.DGLRecord) (*entities.DGLRecord, error) {
 	result := &entities.DGLRecord{}
 
-	var grpID string
+	grpID := ""
 
-	result.Channel = u.DglRepo.GetSubmitChannel(dglRecord.Channel)
-	result.MarketingCode, grpID = u.DglRepo.GetMarketingCode(dglRecord.MarketingCode)
+	dglRecord.Channel = u.DglRepo.GetSubmitChannel(dglRecord.Channel)
+	dglRecord.MarketingCode, grpID = u.DglRepo.GetMarketingCode(dglRecord.MarketingCode)
 
 	if grpID != "" {
-		result.ApplicationType = u.DglRepo.GetApplicationType(grpID)
+		dglRecord.ApplicationType = u.DglRepo.GetApplicationType(grpID)
 	}
 
-	result.ProductType = u.DglRepo.GetProductType(dglRecord.ProductType)
-	result.LoanPurpose = u.DglRepo.GetLoanPurposeDLG(dglRecord.LoanPurpose)
-	result.LoanTerm = u.DglRepo.GetLoanTerm(dglRecord.LoanTerm)
+	dglRecord.ProductType = u.DglRepo.GetProductType(dglRecord.ProductType)
+	dglRecord.LoanPurpose = u.DglRepo.GetLoanPurposeDLG(dglRecord.LoanPurpose)
+	dglRecord.LoanTerm = u.DglRepo.GetLoanTerm(dglRecord.LoanTerm)
+
+	branch, err := u.DglRepo.GetBranch(dglRecord.Branch)
+	if err == nil {
+		dglRecord.Branch_District = branch.Brcity
+		dglRecord.Branch_Sub_District = branch.Brad3
+		if branch.Brstate != "" {
+			dglRecord.Branch_Province = u.DglRepo.GetProvinceFallBack(branch.Brstate)
+			dglRecord.Branch_Region = u.DglRepo.GetRegion(branch.Brstate)
+
+			// create subDistrictId , districtId for Latitude-Longitude
+			subD := u.DglRepo.GetSubDistrictCode(branch.Brstate + branch.Dist)
+			di := utils.AddLeadingZeroIfSingleDigit(branch.Dist)
+			di = branch.Brstate + di
+			subDFormat := utils.FormatSubdistrictCode(subD)
+			subDFormat = di + subDFormat
+			latiLong, err := u.DglRepo.GetLatitudeLongitude(subDFormat + di + branch.Brstate)
+			if err == nil {
+				if latiLong.Latitude > 0 && latiLong.Longitude > 0 {
+					dglRecord.Branch_Latitude = latiLong.Latitude
+					dglRecord.Branch_Longitude = latiLong.Longitude
+				}
+			}
+		}
+	}
 
 	var countryFromApplicant string
-	result.Applicants = make([]*entities.Applicant, 0, len(dglRecord.Applicants))
+
 	for _, y := range dglRecord.Applicants {
 		countryFromApplicant = y.Nationality
 
-		newApplicant := y
-		newApplicant.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		newApplicant.Sex = u.DglRepo.GetGender(y.Sex)
-		newApplicant.MaritalStatus = u.DglRepo.GetMaritalStatus(y.MaritalStatus)
-		newApplicant.EducationLevel = u.DglRepo.GetEducation(y.EducationLevel)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
+		y.Sex = u.DglRepo.GetGender(y.Sex)
+		y.MaritalStatus = u.DglRepo.GetMaritalStatus(y.MaritalStatus)
+		y.EducationLevel = u.DglRepo.GetEducation(y.EducationLevel)
 
-		newApplicant.NcbConsentType = ""
-		newApplicant.NcbConsentAcceptanceCode = ""
+		y.NcbConsentType = ""
+		y.NcbConsentAcceptanceCode = ""
 		if len(y.NCB_Consents) > 0 {
-			newApplicant.NcbConsentType = y.NCB_Consents[0].NcbConsentType
-			newApplicant.NcbConsentAcceptanceCode = y.NCB_Consents[0].NcbConsentAcceptanceCode
+			for i, v := range y.NCB_Consents {
+				if i == 0 {
+					y.NcbConsentType = v.NcbConsentType
+					y.NcbConsentAcceptanceCode = v.NcbConsentAcceptanceCode
+				}
+			}
 		}
-		newApplicant.NCB_Consents = []entities.NCBConsents{}
-
-		result.Applicants = append(result.Applicants, newApplicant)
+		y.NCB_Consents = []entities.NCBConsents{}
 	}
 
-	result.Addresses = make([]*entities.Address, 0, len(dglRecord.Addresses))
 	for _, y := range dglRecord.Addresses {
-		newAddress := y
-		newAddress.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 
 		addressCountry := countryFromApplicant
 		addressProvinceState := y.Province
@@ -71,72 +95,73 @@ func (u *dglUsecase) DglMapper(dglRecord *entities.DGLRecord) (*entities.DGLReco
 		addressDistrictCity, _ := strconv.Atoi(y.District)
 		parseAddressDistrictCity := fmt.Sprint(addressDistrictCity)
 
-		newAddress.SubDistrict = u.DglRepo.GetSubDistrict(parseAddressSubDistrict + parseAddressDistrictCity + addressProvinceState + addressCountry)
-		newAddress.District = u.DglRepo.GetDistrict(parseAddressDistrictCity + addressProvinceState + addressCountry)
+		y.SubDistrict = u.DglRepo.GetSubDistrict(parseAddressSubDistrict + parseAddressDistrictCity + addressProvinceState + addressCountry)
+		y.District = u.DglRepo.GetDistrict(parseAddressDistrictCity + addressProvinceState + addressCountry)
 
-		newAddress.Province = u.DglRepo.GetProvinceFallBack(addressCountry + addressProvinceState)
-		if newAddress.Province == addressCountry+addressProvinceState {
-			newAddress.Province = addressProvinceState
+		y.Province = u.DglRepo.GetProvinceFallBack(addressCountry + addressProvinceState)
+		if y.Province == addressCountry+addressProvinceState {
+			y.Province = addressProvinceState
 		}
 
-		result.Addresses = append(result.Addresses, newAddress)
+		di := utils.AddLeadingZeroIfSingleDigit(parseAddressDistrictCity)
+		di = addressProvinceState + di
+		subDFormated := utils.FormatSubdistrictCode(parseAddressSubDistrict)
+		subDFormated = di + subDFormated
+		latiLong, err := u.DglRepo.GetLatitudeLongitude(subDFormated + di + addressProvinceState)
+		if err == nil {
+			if latiLong.Latitude > 0 && latiLong.Longitude > 0 {
+				y.Latitude_N = latiLong.Latitude
+				y.Longitude_N = latiLong.Longitude
+				y.DistanceFromBranch = utils.CalculateDistance(y.Latitude_N, y.Longitude_N, dglRecord.Branch_Latitude, dglRecord.Branch_Longitude)
+			}
+		}
+		y.Region = u.DglRepo.GetRegion(addressProvinceState)
 	}
 
-	result.Employments = make([]*entities.Employment, 0, len(dglRecord.Employments))
 	for _, y := range dglRecord.Employments {
-		newEmp := y
-		newEmp.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		newEmp.Occupation = u.DglRepo.GetOccupation(y.Occupation)
-		result.Employments = append(result.Employments, newEmp)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
+		y.Occupation = u.DglRepo.GetOccupation(y.Occupation)
 	}
 
-	result.ExistingApplicants = make([]*entities.ExistingApplicant, 0, len(dglRecord.ExistingApplicants))
 	for _, y := range dglRecord.ExistingApplicants {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.ExistingApplicants = append(result.ExistingApplicants, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
-	result.NCBs = make([]*entities.NCB, 0, len(dglRecord.NCBs))
 	for _, y := range dglRecord.NCBs {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBs = append(result.NCBs, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
-	result.NCBAccounts = make([]*entities.NCBAccount, 0, len(dglRecord.NCBAccounts))
 	for _, y := range dglRecord.NCBAccounts {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBAccounts = append(result.NCBAccounts, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
-	result.NCBIDs = make([]*entities.NCBID, 0, len(dglRecord.NCBIDs))
 	for _, y := range dglRecord.NCBIDs {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBIDs = append(result.NCBIDs, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
-	result.NCBNames = make([]*entities.NCBName, 0, len(dglRecord.NCBNames))
 	for _, y := range dglRecord.NCBNames {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBNames = append(result.NCBNames, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
-	result.NCBAddresses = make([]*entities.NCBAddress, 0, len(dglRecord.NCBAddresses))
 	for _, y := range dglRecord.NCBAddresses {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBAddresses = append(result.NCBAddresses, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
+		subDistrictsTH := utils.RemoveSpecialStrings(y.SubDistrict)
+		districtsTH := utils.RemoveSpecialStrings(y.District)
+		provinceTH := utils.RemoveSpecialStrings(y.Province)
+		regionName := u.DglRepo.GetRegion(provinceTH)
+		latLongLookup, err := u.DglRepo.GetLatitudeLongitude(subDistrictsTH + districtsTH + provinceTH)
+		if err == nil {
+			if latLongLookup.Latitude > 0 && latLongLookup.Longitude > 0 {
+				y.Latitude_N = latLongLookup.Latitude
+				y.Longitude_N = latLongLookup.Longitude
+				y.DistanceFromBranch = utils.CalculateDistance(y.Latitude_N, y.Longitude_N, dglRecord.Branch_Latitude, dglRecord.Branch_Longitude)
+			}
+		}
+		y.Region = regionName
 	}
 
-	result.NCBScores = make([]*entities.NCBScore, 0, len(dglRecord.NCBScores))
 	for _, y := range dglRecord.NCBScores {
-		newItem := y
-		newItem.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
-		result.NCBScores = append(result.NCBScores, newItem)
+		y.ApplicantType = u.DglRepo.GetApplicantType(y.ApplicantType)
 	}
 
 	return result, nil

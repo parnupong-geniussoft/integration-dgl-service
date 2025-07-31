@@ -12,6 +12,7 @@ import (
 
 type DglRepository interface {
 	GetAndInitCache(k string, dataKey string, getFromDB func() map[string]string) string
+	GetAndInitCacheInterface(k string, dataKey string, getFromDB func() map[string]any) (string, any)
 	GetSubmitChannel(k string) string
 	GetMarketingCode(k string) (name string, id string)
 	GetApplicationType(k string) string
@@ -29,6 +30,10 @@ type DglRepository interface {
 	GetOccupation(k string) string
 	GetApplicantType(k string) string
 	GetLoanPurposeDLG(k string) string
+	GetRegion(k string) string
+	GetSubDistrictCode(k string) string
+	GetBranch(k string) (*entities.BranchLookupInfo, error)
+	GetLatitudeLongitude(k string) (*entities.LatitudeLongitudeLookupInfo, error)
 }
 
 type dglRepo struct {
@@ -59,6 +64,24 @@ func (r *dglRepo) GetAndInitCache(k string, dataKey string, getFromDB func() map
 	}
 
 	return x
+}
+
+func (r *dglRepo) GetAndInitCacheInterface(k string, dataKey string, getFromDB func() map[string]any) (string, any) {
+	m, found := r.C.Get(dataKey)
+
+	times := utils.GetTimeMinsToNewDay()
+	if !found {
+		m = getFromDB()
+		r.C.Set(dataKey, m, times)
+	}
+
+	x, found := m.(map[string]any)[k]
+
+	if !found {
+		return k, nil
+	}
+
+	return k, x
 }
 
 func (r *dglRepo) GetSubmitChannel(k string) string {
@@ -437,4 +460,110 @@ func (r *dglRepo) GetLoanPurposeDLG(k string) string {
 	})
 
 	return x
+}
+
+func (r *dglRepo) GetRegion(k string) string {
+	x := r.GetAndInitCache(k, "region", func() map[string]string {
+		xs := []entities.Region{}
+		err := r.Db.Select(&xs, "SELECT provincemoi_id, provincenamethai,regionname FROM region")
+
+		if err != nil {
+			fmt.Println("GetRegion Err: ", err)
+		}
+		m := make(map[string]string)
+
+		for _, x := range xs {
+			m[x.Key] = x.Value
+			m[x.Key2] = x.Value
+		}
+
+		return m
+	})
+
+	return x
+}
+
+func (r *dglRepo) GetSubDistrictCode(k string) string {
+	x := r.GetAndInitCache(k, "subDistrictCode", func() map[string]string {
+		xs := []entities.SubDistrict{}
+		err := r.Db.Select(&xs, "SELECT st, di, subd FROM sub_district")
+
+		if err != nil {
+			fmt.Println("GetSubDistrictCode Err: ", err)
+		}
+		m := make(map[string]string)
+		for _, x := range xs {
+			m[x.Key3+x.Key2] = x.Key
+		}
+
+		return m
+	})
+
+	return x
+}
+
+func (r *dglRepo) GetBranch(k string) (*entities.BranchLookupInfo, error) {
+	_, data := r.GetAndInitCacheInterface(k, "branchInfomation", func() map[string]any {
+		xs := []entities.Branch{}
+		if r.Db != nil {
+			err := r.Db.Select(&xs, "SELECT ccdef, brcntry, COALESCE(brstate, '') as brstate, COALESCE(dist, '') as dist, COALESCE(brcity, '') as brcity, COALESCE(brad3, '') as brad3 FROM branch_detail")
+			if err != nil {
+				fmt.Println("GetBranchInformation Err: ", err)
+			}
+		}
+		m := make(map[string]any)
+
+		for _, x := range xs {
+			m[x.Key] = x
+		}
+		// fmt.Println("len of map m Branch:", len(m))
+		return m
+	})
+	lookup := &entities.BranchLookupInfo{}
+	if data != nil {
+		db := data.(entities.Branch)
+		lookup.Ccdef = db.Key
+		lookup.Brcntry = db.Key2
+		lookup.Brstate = db.Key3
+		lookup.Dist = db.Key4
+		lookup.Brcity = db.Value
+		lookup.Brad3 = db.Value2
+		return lookup, nil
+	}
+	return lookup, fmt.Errorf("empty")
+}
+
+func (r *dglRepo) GetLatitudeLongitude(k string) (*entities.LatitudeLongitudeLookupInfo, error) {
+	_, data := r.GetAndInitCacheInterface(k, "latitudeLongtitude", func() map[string]any {
+
+		location := []entities.LatitudeLongitude{}
+		query := `
+	SELECT DISTINCT ON ("sub-districts_id", "districts_id", "provnce_id")
+	"sub-districts_id", "districts_id", "provnce_id", "sub_districts_th","districts_th","provnce_th","longitude", "latitude"
+	FROM lat_long;
+	`
+		err := r.Db.Select(&location, query)
+		if err != nil {
+			fmt.Printf("GetLatitudeLongtitudeCache error: %v\n", err)
+		}
+		m := make(map[string]any)
+
+		for _, obj := range location {
+			// key = sub-districts_id + districts_id + provnce_id
+			m[obj.Key+obj.Key2+obj.Key3] = obj
+
+			// key = sub_districts_th + districts_th + provnce_th
+			m[obj.Key4+obj.Key5+obj.Key6] = obj
+		}
+		return m
+	})
+	lookup := &entities.LatitudeLongitudeLookupInfo{}
+	if data != nil {
+		db := data.(entities.LatitudeLongitude)
+		lookup.Latitude = db.Value
+		lookup.Longitude = db.Value2
+		return lookup, nil
+	}
+	// return default empty ,if not found latitude , longtitude
+	return lookup, fmt.Errorf("empty")
 }
